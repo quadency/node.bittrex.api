@@ -4,8 +4,8 @@ const bittrex = require('../node.bittrex.api');
 /**
  *  a bare client
  */
-var websocketsclient;
-bittrex.websockets.client(function(client) {
+let websocketsclient;
+bittrex.websockets.client((client) => {
   websocketsclient = client;
 
   /**

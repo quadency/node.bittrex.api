@@ -2,27 +2,27 @@
 const bittrex = require('../node.bittrex.api');
 
 bittrex.options({
-  'verbose' : true,
+  verbose: true,
 });
 
 bittrex.options({
   verbose: true,
   websockets: {
-    onConnect: function() {
+    onConnect() {
       console.log('onConnect fired');
-      bittrex.websockets.subscribe(['BTC-ETH'], function(data, client) {
+      bittrex.websockets.subscribe(['BTC-ETH'], (data, client) => {
         if (data.M === 'updateExchangeState') {
-          data.A.forEach(function(data_for) {
-            console.log('Market Update for '+ data_for.MarketName);
+          data.A.forEach((data_for) => {
+            console.log(`Market Update for ${data_for.MarketName}`);
           });
         }
       });
-      
-      
-      bittrex.websockets.subscribe(['BTC-OMG'], function(data, client) {
+
+
+      bittrex.websockets.subscribe(['BTC-OMG'], (data, client) => {
         if (data.M === 'updateExchangeState') {
-          data.A.forEach(function(data_for) {
-            console.log('Market Update for '+ data_for.MarketName);
+          data.A.forEach((data_for) => {
+            console.log(`Market Update for ${data_for.MarketName}`);
           });
         }
       });
@@ -31,7 +31,7 @@ bittrex.options({
 });
 
 console.log('Connecting ....');
-bittrex.websockets.client(function(client) {
+bittrex.websockets.client((client) => {
   // connected - you can do any one-off connection events here
   //
   // Note: Reoccuring events like listen() and subscribe() should be done
