@@ -462,5 +462,6 @@ function NodeBittrexApi(instanceOptions) {
   };
 }
 
-export default NodeBittrexApi;
+// eslint-disable-next-line new-cap
+module.exports = NodeBittrexApi();
 module.exports.createInstance = NodeBittrexApi;
