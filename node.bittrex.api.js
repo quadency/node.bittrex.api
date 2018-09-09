@@ -1,9 +1,9 @@
-import request from 'request';
-import assign from 'object-assign';
-import jsonic from 'jsonic';
-import signalR from 'signalr-client';
-import cloudscraper from 'cloudscraper';
-import hmac_sha512 from './hmac-sha512';
+const request = require('request');
+const assign = require('object-assign');
+const hmac_sha512 = require('./hmac-sha512.js');
+const jsonic = require('jsonic');
+const signalR = require('signalr-client');
+const cloudscraper = require('cloudscraper');
 
 function NodeBittrexApi(instanceOptions) {
   let wsclient = null;
@@ -367,6 +367,7 @@ function NodeBittrexApi(instanceOptions) {
           setMessageReceivedWs();
         }, force);
       },
+
     },
     sendCustomRequest(request_string, callback, credentials) {
       let op;
