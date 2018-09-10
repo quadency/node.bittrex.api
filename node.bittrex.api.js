@@ -5,7 +5,7 @@ const jsonic = require('jsonic');
 const signalR = require('signalr-client');
 const cloudscraper = require('cloudscraper');
 
-function NodeBittrexApi(instanceOptions) {
+const NodeBittrexApi = function (givenOptions) {
   let wsclient = null;
 
   const default_request_options = {
@@ -33,17 +33,8 @@ function NodeBittrexApi(instanceOptions) {
     requestTimeoutInSeconds: 15,
   };
 
-  const extractOptions = function (options) {
-    Object.keys(options).forEach((obj) => {
-      opts[obj] = options[obj];
-    });
-  };
-
-  if (instanceOptions) {
-    extractOptions(instanceOptions);
-  }
-
   let lastNonces = [];
+
   const getNonce = function () {
     let nonce = new Date().getTime();
 
@@ -53,11 +44,20 @@ function NodeBittrexApi(instanceOptions) {
 
     // keep the last X to try ensure we don't have collisions even if the clock is adjusted
     lastNonces = lastNonces.slice(-50);
-
     lastNonces.push(nonce);
 
     return nonce;
   };
+
+  const extractOptions = function (options) {
+    Object.keys(options).forEach((key) => {
+      opts[key] = options[key];
+    });
+  };
+
+  if (givenOptions) {
+    extractOptions(givenOptions);
+  }
 
   const updateQueryStringParameter = function (uri, key, value) {
     const re = new RegExp(`([?&])${key}=.*?(&|$)`, 'i');
@@ -71,20 +71,20 @@ function NodeBittrexApi(instanceOptions) {
 
   const setRequestUriGetParams = function (uri, options) {
     let op;
-    let params = '';
+    let updatedUri = uri;
     if (typeof (uri) === 'object') {
       op = uri;
-      params = op.uri;
+      updatedUri = op.uri;
     } else {
       op = assign({}, default_request_options);
     }
 
-    Object.keys(options).forEach((obj) => {
-      params = updateQueryStringParameter(uri, obj, options[obj]);
+    Object.keys(options).forEach((key) => {
+      updatedUri = updateQueryStringParameter(updatedUri, key, options[key]);
     });
 
-    op.headers.apisign = hmac_sha512.HmacSHA512(params || uri, opts.apisecret); // setting the HMAC hash `apisign` http header
-    op.uri = params || uri;
+    op.headers.apisign = hmac_sha512.HmacSHA512(updatedUri, opts.apisecret); // setting the HMAC hash `apisign` http header
+    op.uri = updatedUri;
     op.timeout = opts.requestTimeoutInSeconds * 1000;
 
     return op;
@@ -95,9 +95,9 @@ function NodeBittrexApi(instanceOptions) {
       apikey: opts.apikey,
       nonce: getNonce(),
     };
+
     return setRequestUriGetParams(uri, options);
   };
-
 
   const sendRequestCallback = function (callback, op) {
     const start = Date.now();
@@ -111,27 +111,34 @@ function NodeBittrexApi(instanceOptions) {
           error,
           result,
         };
-        ((opts.inverse_callback_arguments) ?
+        return ((opts.inverse_callback_arguments) ?
           callback(errorObj, null) :
           callback(null, errorObj));
-        return;
       }
       try {
-        const jsonResult = JSON.parse(body);
-        if (!result || !result.success) {
+        const resultJson = JSON.parse(body);
+
+        if (!resultJson || !resultJson.success) {
           // error returned by bittrex API - forward the result as an error
-          ((opts.inverse_callback_arguments) ?
-            callback(result, null) :
-            callback(null, result));
-          return;
+          return ((opts.inverse_callback_arguments) ?
+            callback(resultJson, null) :
+            callback(null, resultJson));
         }
-        ((opts.inverse_callback_arguments) ?
-          callback(null, ((opts.cleartext) ? body : jsonResult)) :
-          callback(((opts.cleartext) ? body : jsonResult), null));
-        return;
+        return ((opts.inverse_callback_arguments) ?
+          callback(null, ((opts.cleartext) ? body : resultJson)) :
+          callback(((opts.cleartext) ? body : resultJson), null));
       } catch (err) {
-        console.error(err);
+        console.error('error parsing body', err);
       }
+      if (!result || !result.success) {
+        // error returned by bittrex API - forward the result as an error
+        return ((opts.inverse_callback_arguments) ?
+          callback(result, null) :
+          callback(null, result));
+      }
+      return ((opts.inverse_callback_arguments) ?
+        callback(null, ((opts.cleartext) ? body : result)) :
+        callback(((opts.cleartext) ? body : result), null));
     });
   };
 
@@ -145,7 +152,9 @@ function NodeBittrexApi(instanceOptions) {
 
   const credentialApiCall = function (url, callback, options) {
     if (options) {
-      options = setRequestUriGetParams(apiCredentials(url), options);
+      const updateOptions = setRequestUriGetParams(apiCredentials(url), options);
+      sendRequestCallback(callback, updateOptions);
+      return;
     }
     sendRequestCallback(callback, options);
   };
@@ -173,7 +182,7 @@ function NodeBittrexApi(instanceOptions) {
       try {
         wsclient.end();
       } catch (e) {
-        console.error(e);
+        console.err('Error ening ws client', e);
       }
     }
 
@@ -203,10 +212,10 @@ function NodeBittrexApi(instanceOptions) {
       }, 5 * 1000);
     }
 
-    cloudscraper.get('https://bittrex.com/', (error, response) => {
-      if (error) {
+    cloudscraper.get('https://bittrex.com/', (cloudscraperError, response) => {
+      if (cloudscraperError) {
         console.error('Cloudscraper error occurred');
-        console.error(error);
+        console.error(cloudscraperError);
         return;
       }
 
@@ -236,8 +245,8 @@ function NodeBittrexApi(instanceOptions) {
             opts.websockets.onConnect();
           }
         },
-        connectFailed(err) {
-          ((opts.verbose) ? console.log('Websocket connectFailed: ', err) : '');
+        connectFailed(error) {
+          ((opts.verbose) ? console.log('Websocket connectFailed: ', error) : '');
         },
         disconnected() {
           ((opts.verbose) ? console.log('Websocket disconnected') : '');
@@ -255,18 +264,19 @@ function NodeBittrexApi(instanceOptions) {
             ((opts.verbose) ? console.log('Websocket auto reconnecting.') : '');
             wsclient.start(); // ensure we try reconnect
           } else if (websocketWatchDog) {
+            // otherwise, clear the watchdog interval if necessary
             clearInterval(websocketWatchDog);
             websocketWatchDog = null;
           }
         },
-        onerror(err) {
-          ((opts.verbose) ? console.log('Websocket onerror: ', err) : '');
+        onerror(error) {
+          ((opts.verbose) ? console.log('Websocket onerror: ', error) : '');
         },
-        bindingError(err) {
-          ((opts.verbose) ? console.log('Websocket bindingError: ', err) : '');
+        bindingError(error) {
+          ((opts.verbose) ? console.log('Websocket bindingError: ', error) : '');
         },
-        connectionLost(err) {
-          ((opts.verbose) ? console.log('Connection Lost: ', err) : '');
+        connectionLost(error) {
+          ((opts.verbose) ? console.log('Connection Lost: ', error) : '');
         },
         reconnecting() {
           return true;
@@ -367,7 +377,6 @@ function NodeBittrexApi(instanceOptions) {
           setMessageReceivedWs();
         }, force);
       },
-
     },
     sendCustomRequest(request_string, callback, credentials) {
       let op;
@@ -461,8 +470,8 @@ function NodeBittrexApi(instanceOptions) {
       publicApiCall(`${opts.baseUrlv2}/pub/currencies/GetBTCPrice`, callback, options);
     },
   };
-}
+};
 
-// eslint-disable-next-line new-cap
 module.exports = NodeBittrexApi();
+
 module.exports.createInstance = NodeBittrexApi;

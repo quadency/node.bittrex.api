@@ -34,6 +34,6 @@ module.exports = {
     'global-require': [OFF],
     'import/no-dynamic-require': [OFF],
     'camelcase': [OFF],
-    'new-cap': ["error", { "properties": false }]
+    'new-cap': [OFF]
   },
 };
