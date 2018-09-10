@@ -182,7 +182,7 @@ const NodeBittrexApi = function (givenOptions) {
       try {
         wsclient.end();
       } catch (e) {
-        console.err('Error ening ws client', e);
+        console.err('Error ending ws client', e);
       }
     }
 
@@ -321,6 +321,7 @@ const NodeBittrexApi = function (givenOptions) {
     return wsclient;
   };
 
+
   const setMessageReceivedWs = function () {
     wsclient.serviceHandlers.messageReceived = function (message) {
       websocketLastMessage = (new Date()).getTime();
@@ -338,7 +339,6 @@ const NodeBittrexApi = function (givenOptions) {
             }
           });
         } else {
-          // ((opts.verbose) ? console.log('Unhandled data', data) : '');
           if (websocketGlobalTickerCallback) {
             websocketGlobalTickerCallback({ unhandled_data: data }, wsclient);
           }
@@ -353,6 +353,66 @@ const NodeBittrexApi = function (givenOptions) {
       }
       return false;
     };
+  };
+
+  const decodeMessage = function (encodedMessage) {
+    // console.log('encoded message', encodedMessage);
+    // const gzipMessage = atob(encodedMessage);
+    // console.log('gzip', gzipMessage);
+
+    // const buffer = Buffer.from(encodedMessage, 'base64');
+    // console.log(buffer.toString('utf8'));
+  };
+
+  const connectAuthenticateWs = function (apiKey, apiSecret, subscriptionKey, messageCallback) {
+    const HUB = 'c2';
+    const authenticatedClient = new signalR.client(
+      opts.websockets_baseurl,
+      ['c2'],
+      undefined,
+      true,
+    );
+
+    authenticatedClient.serviceHandlers.messageReceived = function (message) {
+      const data = jsonic(message.utf8Data);
+      console.log('raw data', data);
+
+      if (data && data.G) {
+        decodeMessage(data.G);
+      }
+
+      if (data && data.R) {
+        if (data.I === '1') {
+          const challengeString = data.R;
+          const hmacSha512 = hmac_sha512.HmacSHA512(challengeString, apiSecret);
+          const signedChallenge = hmacSha512.toString().toUpperCase().replace('-', '');
+
+          authenticatedClient.invoke(HUB, 'Authenticate', apiKey, signedChallenge);
+        } else if (data.R) {
+          console.log('Successfully authenticated user');
+        }
+      } else if (data && data.E) {
+        console.error('Error authenticating because', data.E);
+      }
+    };
+
+    authenticatedClient.serviceHandlers.connected = function () {
+      console.log('Client connected...Now authenticating');
+      authenticatedClient.invoke(HUB, 'GetAuthContext', apiKey);
+
+
+    };
+
+    authenticatedClient.serviceHandlers.onUnauthorized = (res) => { console.log('rest', res); };
+    authenticatedClient.serviceHandlers.bindingError = (res) => { console.log('rest', res); };
+    authenticatedClient.serviceHandlers.onerror = (res) => { console.log('rest', res); };
+    authenticatedClient.serviceHandlers.disconnected = (res) => { console.log('rest', res); };
+
+    authenticatedClient.on(HUB, 'uB', (message) => {
+      console.log('hello lets go', message);
+    });
+
+    authenticatedClient.start();
   };
 
   return {
@@ -376,6 +436,14 @@ const NodeBittrexApi = function (givenOptions) {
           websocketMarketsCallbacks.push(callback);
           setMessageReceivedWs();
         }, force);
+      },
+      subscribeBalance(apiKey, apiSecret, callback) {
+        const balanceKey = 'ub';
+        connectAuthenticateWs(apiKey, apiSecret, balanceKey, callback);
+      },
+      subscribeOrders(apiKey, apiSecret, callback) {
+        const ordersKey = 'uO';
+        connectAuthenticateWs(apiKey, apiSecret, ordersKey, callback);
       },
     },
     sendCustomRequest(request_string, callback, credentials) {
