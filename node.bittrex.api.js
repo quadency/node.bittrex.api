@@ -4,6 +4,7 @@ const hmac_sha512 = require('./hmac-sha512.js');
 const jsonic = require('jsonic');
 const signalR = require('signalr-client');
 const cloudscraper = require('cloudscraper');
+const zlib = require('zlib');
 
 const NodeBittrexApi = function (givenOptions) {
   let wsclient = null;
@@ -355,62 +356,60 @@ const NodeBittrexApi = function (givenOptions) {
     };
   };
 
-  const decodeMessage = function (encodedMessage) {
-    // console.log('encoded message', encodedMessage);
-    // const gzipMessage = atob(encodedMessage);
-    // console.log('gzip', gzipMessage);
+  const decodeMessage = function (encodedMessage, callback) {
+    const raw = Buffer.from(encodedMessage, 'base64');
 
-    // const buffer = Buffer.from(encodedMessage, 'base64');
-    // console.log(buffer.toString('utf8'));
+    zlib.inflateRaw(raw, (err, inflated) => {
+      if (err) {
+        console.log('Error uncompressing message', err);
+        callback(null);
+        return;
+      }
+      callback(JSON.parse(inflated.toString('utf8')));
+    });
   };
 
+  // All authenticated ws will be open as separate connections (cause thats our use case)
   const connectAuthenticateWs = function (apiKey, apiSecret, subscriptionKey, messageCallback) {
     const HUB = 'c2';
     const authenticatedClient = new signalR.client(
       opts.websockets_baseurl,
-      ['c2'],
+      [HUB],
       undefined,
       true,
     );
 
-    authenticatedClient.serviceHandlers.messageReceived = function (message) {
-      const data = jsonic(message.utf8Data);
-      console.log('raw data', data);
-
-      if (data && data.G) {
-        decodeMessage(data.G);
-      }
-
-      if (data && data.R) {
-        if (data.I === '1') {
-          const challengeString = data.R;
-          const hmacSha512 = hmac_sha512.HmacSHA512(challengeString, apiSecret);
-          const signedChallenge = hmacSha512.toString().toUpperCase().replace('-', '');
-
-          authenticatedClient.invoke(HUB, 'Authenticate', apiKey, signedChallenge);
-        } else if (data.R) {
-          console.log('Successfully authenticated user');
-        }
-      } else if (data && data.E) {
-        console.error('Error authenticating because', data.E);
-      }
-    };
-
     authenticatedClient.serviceHandlers.connected = function () {
       console.log('Client connected...Now authenticating');
-      authenticatedClient.invoke(HUB, 'GetAuthContext', apiKey);
+      authenticatedClient.call(HUB, 'GetAuthContext', apiKey).done((err, challenge) => {
+        const hmacSha512 = hmac_sha512.HmacSHA512(challenge, apiSecret);
+        const signedChallenge = hmacSha512.toString().toUpperCase().replace('-', '');
 
+        authenticatedClient.call(HUB, 'Authenticate', apiKey, signedChallenge).done((authenticateError) => {
+          if (authenticateError) {
+            console.log('error authenticating client', authenticateError);
+            return;
+          }
+          console.log('Client successfully connected');
 
+          authenticatedClient.on('c2', 'uB', (rawBalance) => {
+            decodeMessage(rawBalance, (balance) => {
+              if (subscriptionKey === 'uB') {
+                messageCallback(balance);
+              }
+            });
+          });
+
+          authenticatedClient.on('c2', 'uO', (rawOrder) => {
+            decodeMessage(rawOrder, (order) => {
+              if (subscriptionKey === 'uO') {
+                messageCallback(order);
+              }
+            });
+          });
+        });
+      });
     };
-
-    authenticatedClient.serviceHandlers.onUnauthorized = (res) => { console.log('rest', res); };
-    authenticatedClient.serviceHandlers.bindingError = (res) => { console.log('rest', res); };
-    authenticatedClient.serviceHandlers.onerror = (res) => { console.log('rest', res); };
-    authenticatedClient.serviceHandlers.disconnected = (res) => { console.log('rest', res); };
-
-    authenticatedClient.on(HUB, 'uB', (message) => {
-      console.log('hello lets go', message);
-    });
 
     authenticatedClient.start();
   };
@@ -438,7 +437,7 @@ const NodeBittrexApi = function (givenOptions) {
         }, force);
       },
       subscribeBalance(apiKey, apiSecret, callback) {
-        const balanceKey = 'ub';
+        const balanceKey = 'uB';
         connectAuthenticateWs(apiKey, apiSecret, balanceKey, callback);
       },
       subscribeOrders(apiKey, apiSecret, callback) {
