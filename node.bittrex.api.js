@@ -379,6 +379,7 @@ const NodeBittrexApi = function (givenOptions) {
       true,
     );
 
+    authenticatedClient.start();
     authenticatedClient.serviceHandlers.connected = function () {
       console.log('Client connected...Now authenticating');
       authenticatedClient.call(HUB, 'GetAuthContext', opts.apikey).done((err, challenge) => {
@@ -411,7 +412,6 @@ const NodeBittrexApi = function (givenOptions) {
       });
     };
 
-    authenticatedClient.start();
     return authenticatedClient.end;
   };
 
