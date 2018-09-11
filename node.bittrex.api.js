@@ -370,7 +370,7 @@ const NodeBittrexApi = function (givenOptions) {
   };
 
   // All authenticated ws will be open as separate connections (cause thats our use case)
-  const connectAuthenticateWs = function (apiKey, apiSecret, subscriptionKey, messageCallback) {
+  const connectAuthenticateWs = function (subscriptionKey, messageCallback) {
     const HUB = 'c2';
     const authenticatedClient = new signalR.client(
       opts.websockets_baseurl,
@@ -381,11 +381,11 @@ const NodeBittrexApi = function (givenOptions) {
 
     authenticatedClient.serviceHandlers.connected = function () {
       console.log('Client connected...Now authenticating');
-      authenticatedClient.call(HUB, 'GetAuthContext', apiKey).done((err, challenge) => {
-        const hmacSha512 = hmac_sha512.HmacSHA512(challenge, apiSecret);
+      authenticatedClient.call(HUB, 'GetAuthContext', opts.apikey).done((err, challenge) => {
+        const hmacSha512 = hmac_sha512.HmacSHA512(challenge, opts.apisecret);
         const signedChallenge = hmacSha512.toString().toUpperCase().replace('-', '');
 
-        authenticatedClient.call(HUB, 'Authenticate', apiKey, signedChallenge).done((authenticateError) => {
+        authenticatedClient.call(HUB, 'Authenticate', opts.apikey, signedChallenge).done((authenticateError) => {
           if (authenticateError) {
             console.log('error authenticating client', authenticateError);
             return;
@@ -436,13 +436,13 @@ const NodeBittrexApi = function (givenOptions) {
           setMessageReceivedWs();
         }, force);
       },
-      subscribeBalance(apiKey, apiSecret, callback) {
+      subscribeBalance(callback) {
         const balanceKey = 'uB';
-        connectAuthenticateWs(apiKey, apiSecret, balanceKey, callback);
+        connectAuthenticateWs(balanceKey, callback);
       },
-      subscribeOrders(apiKey, apiSecret, callback) {
+      subscribeOrders(callback) {
         const ordersKey = 'uO';
-        connectAuthenticateWs(apiKey, apiSecret, ordersKey, callback);
+        connectAuthenticateWs(ordersKey, callback);
       },
     },
     sendCustomRequest(request_string, callback, credentials) {

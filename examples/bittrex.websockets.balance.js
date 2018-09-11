@@ -11,6 +11,6 @@ bittrex.options({
 });
 
 
-bittrex.websockets.subscribeBalance(apikey, apisecret, (balance) => {
+bittrex.websockets.subscribeBalance((balance) => {
   console.log('bittrex balance', balance);
 });

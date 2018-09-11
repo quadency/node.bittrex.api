@@ -11,6 +11,6 @@ bittrex.options({
 });
 
 
-bittrex.websockets.subscribeOrders(apikey, apisecret, (order) => {
+bittrex.websockets.subscribeOrders((order) => {
   console.log('bittrex order', order);
 });
