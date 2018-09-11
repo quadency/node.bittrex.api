@@ -387,7 +387,7 @@ const NodeBittrexApi = function (givenOptions) {
 
         authenticatedClient.call(HUB, 'Authenticate', opts.apikey, signedChallenge).done((authenticateError) => {
           if (authenticateError) {
-            console.log('error authenticating client', authenticateError);
+            console.log('Error authenticating client because:', authenticateError);
             return;
           }
           console.log('Client successfully connected');
@@ -412,6 +412,7 @@ const NodeBittrexApi = function (givenOptions) {
     };
 
     authenticatedClient.start();
+    return authenticatedClient.end;
   };
 
   return {
@@ -438,11 +439,11 @@ const NodeBittrexApi = function (givenOptions) {
       },
       subscribeBalance(callback) {
         const balanceKey = 'uB';
-        connectAuthenticateWs(balanceKey, callback);
+        return connectAuthenticateWs(balanceKey, callback);
       },
       subscribeOrders(callback) {
         const ordersKey = 'uO';
-        connectAuthenticateWs(ordersKey, callback);
+        return connectAuthenticateWs(ordersKey, callback);
       },
     },
     sendCustomRequest(request_string, callback, credentials) {

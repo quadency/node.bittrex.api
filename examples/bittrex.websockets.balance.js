@@ -11,6 +11,7 @@ bittrex.options({
 });
 
 
-bittrex.websockets.subscribeBalance((balance) => {
+const disconnectedFn = bittrex.websockets.subscribeBalance((balance) => {
   console.log('bittrex balance', balance);
+  disconnectedFn();
 });
