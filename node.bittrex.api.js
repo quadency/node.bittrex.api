@@ -415,6 +415,81 @@ const NodeBittrexApi = function (givenOptions) {
     return authenticatedClient.end;
   };
 
+
+  const orderBookCache = {};
+  let lastOrderBookDeltaTime = Date.now();
+
+  const connectOrderbook = function (markets, callback) {
+    const HUB = 'c2';
+    const orderBookClient = new signalR.client(
+      opts.websockets_baseurl,
+      [HUB],
+      undefined,
+      true,
+    );
+
+    orderBookClient.start();
+    orderBookClient.serviceHandlers.connected = function () {
+      console.log('Client connected...Fetching order book snapshots');
+      markets.forEach((market) => {
+        orderBookClient.call(HUB, 'QueryExchangeState', market).done((err, response) => {
+          if (err) {
+            console.error(err);
+            return;
+          }
+
+          decodeMessage(response, (decodedOrderbook) => {
+            orderBookCache[market] = decodedOrderbook;
+          });
+
+          orderBookClient.call(HUB, 'SubscribeToExchangeDeltas', market).done((deleteError, isSubscribed) => {
+            if (deleteError) {
+              console.error(deleteError);
+              return;
+            }
+            console.log(`${market} is subscribed: ${isSubscribed}`);
+          });
+        });
+      });
+
+      orderBookClient.on(HUB, 'uE', (rawDelta) => {
+        lastOrderBookDeltaTime = Date.now();
+        decodeMessage(rawDelta, (decodeDelta) => {
+          // update order book here
+          callback(orderBookCache, decodeDelta);
+        });
+      });
+    };
+
+
+    if (!websocketWatchDog) {
+      websocketWatchDog = setInterval(() => {
+        if (!orderBookClient) {
+          return;
+        }
+
+        if (opts.websockets && (opts.websockets.autoReconnect === true || typeof (opts.websockets.autoReconnect) === 'undefined')) {
+          const now = (new Date()).getTime();
+          const diff = now - lastOrderBookDeltaTime;
+
+          if (diff > 10 * 1000) {
+            if (opts.verbose) {
+              console.log('Websocket Watch Dog: Websocket has not received communication for over 1 minute. Forcing reconnection. Ruff!');
+            }
+            connectOrderbook(markets, callback);
+            return;
+          }
+          if (opts.verbose) {
+            console.log(`Websocket Watch Dog: Last message received ${diff}ms ago. Ruff!`);
+          }
+        }
+      }, 5 * 1000);
+    }
+
+    return orderBookClient.end;
+  };
+
+
   return {
     options(options) {
       extractOptions(options);
@@ -444,6 +519,9 @@ const NodeBittrexApi = function (givenOptions) {
       subscribeOrders(callback) {
         const ordersKey = 'uO';
         return connectAuthenticateWs(ordersKey, callback);
+      },
+      subscribeOrderBook(markets, callback) {
+        return connectOrderbook(markets, callback);
       },
     },
     sendCustomRequest(request_string, callback, credentials) {
