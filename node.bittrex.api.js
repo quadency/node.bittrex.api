@@ -419,6 +419,36 @@ const NodeBittrexApi = function (givenOptions) {
   const orderBookCache = {};
   let lastOrderBookDeltaTime = Date.now();
 
+  const sideReducer = (acc, curr) => {
+    acc[curr.R] = curr.Q;
+    return acc;
+  };
+
+  const initializeOrderBookFor = function (pair, book) {
+    const buys = (book.Z).reduce(sideReducer, {});
+    const sells = (book.S).reduce(sideReducer, {});
+    orderBookCache[pair] = {
+      buys,
+      sells,
+    };
+  };
+
+  const updateSide = function (pair, side, sideDeltas) {
+    sideDeltas.forEach((delta) => {
+      if (delta.TY === 1) {
+        delete orderBookCache[pair][side][delta.R];
+        return;
+      }
+      orderBookCache[pair][side][delta.R] = delta.Q;
+    });
+  };
+  const updateOrderBookCacheWith = function (deltas) {
+    const { M: pair, Z: buys, S: sells } = deltas;
+
+    updateSide(pair, 'buys', buys);
+    updateSide(pair, 'sells', sells);
+  };
+
   const connectOrderbook = function (markets, callback) {
     const HUB = 'c2';
     const orderBookClient = new signalR.client(
@@ -439,7 +469,7 @@ const NodeBittrexApi = function (givenOptions) {
           }
 
           decodeMessage(response, (decodedOrderbook) => {
-            orderBookCache[market] = decodedOrderbook;
+            initializeOrderBookFor(market, decodedOrderbook);
           });
 
           orderBookClient.call(HUB, 'SubscribeToExchangeDeltas', market).done((deleteError, isSubscribed) => {
@@ -454,9 +484,9 @@ const NodeBittrexApi = function (givenOptions) {
 
       orderBookClient.on(HUB, 'uE', (rawDelta) => {
         lastOrderBookDeltaTime = Date.now();
-        decodeMessage(rawDelta, (decodeDelta) => {
-          // update order book here
-          callback(orderBookCache, decodeDelta);
+        decodeMessage(rawDelta, (delta) => {
+          updateOrderBookCacheWith(delta);
+          callback(orderBookCache, delta);
         });
       });
     };
