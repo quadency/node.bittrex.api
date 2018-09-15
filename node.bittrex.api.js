@@ -425,12 +425,19 @@ const NodeBittrexApi = function (givenOptions) {
   };
 
   const initializeOrderBookFor = function (pair, book) {
-    const buys = (book.Z).reduce(sideReducer, {});
-    const sells = (book.S).reduce(sideReducer, {});
-    orderBookCache[pair] = {
-      buys,
-      sells,
-    };
+    if (book) {
+      const buys = (book.Z).reduce(sideReducer, {});
+      const sells = (book.S).reduce(sideReducer, {});
+      orderBookCache[pair] = {
+        buys,
+        sells,
+      };
+    } else {
+      orderBookCache[pair] = {
+        buys: {},
+        sells: {},
+      };
+    }
   };
 
   const updateSide = function (pair, side, sideDeltas) {
