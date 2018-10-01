@@ -442,6 +442,10 @@ const NodeBittrexApi = function (givenOptions) {
 
   const updateSide = function (pair, side, sideDeltas) {
     sideDeltas.forEach((delta) => {
+      if (!orderBookCache[pair]) {
+        // book hasn't been initialized yet for pair, so ignore.
+        return;
+      }
       if (delta.TY === 1) {
         delete orderBookCache[pair][side][delta.R];
         return;
