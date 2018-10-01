@@ -443,7 +443,7 @@ const NodeBittrexApi = function (givenOptions) {
   const updateSide = function (pair, side, sideDeltas) {
     sideDeltas.forEach((delta) => {
       if (!orderBookCache[pair]) {
-        // book hasn't been initialized yet for pair, so ignore.
+        initializeOrderBookFor(pair, null);
         return;
       }
       if (delta.TY === 1) {
