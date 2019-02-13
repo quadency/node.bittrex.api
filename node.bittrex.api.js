@@ -164,8 +164,6 @@ const NodeBittrexApi = function (givenOptions) {
   let websocketGlobalTickerCallback;
   let websocketMarkets = [];
   let websocketMarketsCallbacks = [];
-  let websocketLastMessage = (new Date()).getTime();
-  let websocketWatchDog;
 
   const resetWs = function () {
     websocketGlobalTickers = false;
@@ -185,32 +183,6 @@ const NodeBittrexApi = function (givenOptions) {
       } catch (e) {
         console.err('Error ending ws client', e);
       }
-    }
-
-    if (!websocketWatchDog) {
-      websocketWatchDog = setInterval(() => {
-        if (!wsclient) {
-          return;
-        }
-
-        if (
-          opts.websockets &&
-          (
-            opts.websockets.autoReconnect === true ||
-            typeof (opts.websockets.autoReconnect) === 'undefined'
-          )
-        ) {
-          const now = (new Date()).getTime();
-          const diff = now - websocketLastMessage;
-
-          if (diff > 60 * 1000) {
-            ((opts.verbose) ? console.log('Websocket Watch Dog: Websocket has not received communication for over 1 minute. Forcing reconnection. Ruff!') : '');
-            connectws(callback, true);
-          } else {
-            ((opts.verbose) ? console.log(`Websocket Watch Dog: Last message received ${diff}ms ago. Ruff!`) : '');
-          }
-        }
-      }, 5 * 1000);
     }
 
     cloudscraper.get('https://bittrex.com/', (cloudscraperError, response) => {
@@ -264,10 +236,6 @@ const NodeBittrexApi = function (givenOptions) {
           ) {
             ((opts.verbose) ? console.log('Websocket auto reconnecting.') : '');
             wsclient.start(); // ensure we try reconnect
-          } else if (websocketWatchDog) {
-            // otherwise, clear the watchdog interval if necessary
-            clearInterval(websocketWatchDog);
-            websocketWatchDog = null;
           }
         },
         onerror(error) {
@@ -325,7 +293,6 @@ const NodeBittrexApi = function (givenOptions) {
 
   const setMessageReceivedWs = function () {
     wsclient.serviceHandlers.messageReceived = function (message) {
-      websocketLastMessage = (new Date()).getTime();
       try {
         const data = jsonic(message.utf8Data);
         if (data && data.M) {
@@ -501,31 +468,6 @@ const NodeBittrexApi = function (givenOptions) {
         });
       });
     };
-
-
-    if (!websocketWatchDog) {
-      websocketWatchDog = setInterval(() => {
-        if (!orderBookClient) {
-          return;
-        }
-
-        if (opts.websockets && (opts.websockets.autoReconnect === true || typeof (opts.websockets.autoReconnect) === 'undefined')) {
-          const now = (new Date()).getTime();
-          const diff = now - lastOrderBookDeltaTime;
-
-          if (diff > 10 * 1000) {
-            if (opts.verbose) {
-              console.log('Websocket Watch Dog: Websocket has not received communication for over 1 minute. Forcing reconnection. Ruff!');
-            }
-            connectOrderbook(markets, callback);
-            return;
-          }
-          if (opts.verbose) {
-            console.log(`Websocket Watch Dog: Last message received ${diff}ms ago. Ruff!`);
-          }
-        }
-      }, 5 * 1000);
-    }
 
     return orderBookClient.end;
   };
