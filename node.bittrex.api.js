@@ -471,6 +471,7 @@ const NodeBittrexApi = function (givenOptions) {
     };
     orderBookClient.serviceHandlers.disconnected = () => {
       console.log('bittrex order book disconnected');
+      orderBookClient.start();
     };
 
 
