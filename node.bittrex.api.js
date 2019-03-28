@@ -222,6 +222,7 @@ const NodeBittrexApi = function (givenOptions) {
           ((opts.verbose) ? console.log('Websocket connectFailed: ', error) : '');
         },
         disconnected() {
+          console.log('bittrex disconnected basic websocket');
           ((opts.verbose) ? console.log('Websocket disconnected') : '');
           if (opts.websockets && typeof (opts.websockets.onDisconnect) === 'function') {
             opts.websockets.onDisconnect();
@@ -468,6 +469,11 @@ const NodeBittrexApi = function (givenOptions) {
         });
       });
     };
+    orderBookClient.serviceHandlers.disconnected = () => {
+      console.log('bittrex order book disconnected');
+      orderBookClient.start();
+    };
+
 
     return orderBookClient.end;
   };
