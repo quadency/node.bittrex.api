@@ -19,6 +19,7 @@ const NodeBittrexApi = function (givenOptions) {
   };
 
   const opts = {
+    hostname: 'https://bittrex.com/',
     baseUrl: 'https://bittrex.com/api/v1.1',
     baseUrlv2: 'https://bittrex.com/Api/v2.0',
     websockets_baseurl: 'wss://socket.bittrex.com/signalr',
@@ -185,7 +186,7 @@ const NodeBittrexApi = function (givenOptions) {
       }
     }
 
-    cloudscraper.get('https://bittrex.com/', (cloudscraperError, response) => {
+    cloudscraper.get(opts.hostname, (cloudscraperError, response) => {
       if (cloudscraperError) {
         console.error('Cloudscraper error occurred');
         console.error(cloudscraperError);
