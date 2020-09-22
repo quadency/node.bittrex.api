@@ -1,7 +1,9 @@
 var assert = require('assert');
 var fs = require('fs');
 var config = JSON.parse(fs.readFileSync(__dirname+'/config.json'));
-var bittrex = require('../node.bittrex.api.js')({
+var bittrex = require('../node.bittrex.api.js');
+
+bittrex.options({
   'apikey' : config.api.key,
   'apisecret' : config.api.secret,
 });
