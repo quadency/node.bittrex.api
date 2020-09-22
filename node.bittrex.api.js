@@ -131,6 +131,15 @@ const NodeBittrexApi = function (givenOptions) {
           callback(((opts.cleartext) ? body : resultJson), null));
       } catch (err) {
         console.error('error parsing body', err);
+        const errorObj = {
+          success: false,
+          message: 'Body parse error',
+          error,
+          result,
+        };
+        return ((opts.inverse_callback_arguments) ?
+          callback(errorObj, null) :
+          callback(null, errorObj));
       }
       if (!result || !result.success) {
         // error returned by bittrex API - forward the result as an error
