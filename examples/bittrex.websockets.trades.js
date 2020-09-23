@@ -4,7 +4,7 @@ bittrex.options({
   verbose: true,
   websockets: {
     onConnect() {
-      bittrex.websockets.subscribeOrderBook('BTC-USDT', 500, (msg) => {
+      bittrex.websockets.subscribeTrades('BTC-USDT', (msg) => {
         console.log(msg);
       });
     },
