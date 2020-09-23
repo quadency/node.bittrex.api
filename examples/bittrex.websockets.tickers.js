@@ -13,4 +13,7 @@ bittrex.options({
 
 bittrex.websockets.client(() => {
   console.log('starting...');
+  setTimeout(() => {
+    bittrex.websockets.unsubscribeTickers();
+  }, 30000);
 });

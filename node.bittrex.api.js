@@ -402,6 +402,30 @@ const NodeBittrexApi = function (givenOptions) {
       });
   };
 
+  const unsubscribe = function (channels, callback) {
+    const unsubscribeChannels = Array.isArray(channels) ? channels : [channels];
+
+    wsclient
+      .call('c3', 'unsubscribe', unsubscribeChannels)
+      .done((err, results) => {
+        if (err) {
+          console.error(err);
+          return;
+        }
+
+        if (results) {
+          results.forEach((result) => {
+            if (!result.Success) {
+              logger.error(`Subscribe failed with error code: ${result.ErrorCode}`);
+            }
+          });
+        }
+        if (callback && typeof callback === 'function') {
+          callback();
+        }
+      });
+  };
+
   // All authenticated ws will be open as separate connections (cause thats our use case)
   const connectAuthenticateWs = function (subscriptionKey, messageCallback) {
     const HUB = 'c2';
@@ -463,6 +487,11 @@ const NodeBittrexApi = function (givenOptions) {
           });
         });
       },
+      unsubscribeTickers() {
+        unsubscribe('tickers', () => {
+          websocketTickersCallbacks = [];
+        });
+      },
       subscribeOrderBook(market, depth, callback) {
         connectws(() => {
           subscribe(`orderbook_${market}_${depth}`, () => {
@@ -476,6 +505,13 @@ const NodeBittrexApi = function (givenOptions) {
           });
         });
       },
+      unsubscribeOrderbook(market, depth) {
+        unsubscribe(`orderbook_${market}_${depth}`, () => {
+          if (websocketOrderbookCallbacks[market] && websocketOrderbookCallbacks[market][depth]) {
+            delete websocketOrderbookCallbacks[market][depth];
+          }
+        });
+      },
       subscribeTrades(market, callback) {
         connectws(() => {
           subscribe(`trade_${market}`, () => {
@@ -484,6 +520,13 @@ const NodeBittrexApi = function (givenOptions) {
             }
             websocketTradesCallbacks[market].push(callback);
           });
+        });
+      },
+      unsubscribeTrades(market) {
+        unsubscribe(`trade_${market}`, () => {
+          if (websocketTradesCallbacks[market]) {
+            delete websocketTradesCallbacks[market];
+          }
         });
       },
       subscribeBalance(callback) {

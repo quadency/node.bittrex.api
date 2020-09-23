@@ -13,4 +13,7 @@ bittrex.options({
 
 bittrex.websockets.client(() => {
   console.log('Starting...');
+  setTimeout(() => {
+    bittrex.websockets.unsubscribeOrderbook('BTC-USDT', 500);
+  }, 30000);
 });
