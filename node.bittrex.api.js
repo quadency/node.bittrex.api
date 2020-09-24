@@ -23,10 +23,8 @@ const NodeBittrexApi = function (givenOptions) {
     hostname: 'https://bittrex.com/',
     baseUrl: 'https://bittrex.com/api/v1.1',
     baseUrlv2: 'https://bittrex.com/Api/v2.0',
-    websockets_baseurl: 'wss://socket.bittrex.com/signalr',
-    websockets_baseurlv3: 'wss://socket-v3.bittrex.com/signalr',
-    websockets_hubs: ['CoreHub'],
-    websockets_hubsv3: ['c3'],
+    websockets_baseurl: 'wss://socket-v3.bittrex.com/signalr',
+    websockets_hubs: ['c3'],
     apikey: 'APIKEY',
     apisecret: 'APISECRET',
     verbose: false,
@@ -357,8 +355,8 @@ const NodeBittrexApi = function (givenOptions) {
       };
 
       wsclient = new signalR.client(
-        opts.websockets_baseurlv3,
-        opts.websockets_hubsv3,
+        opts.websockets_baseurl,
+        opts.websockets_hubs,
         undefined,
         true,
       );
