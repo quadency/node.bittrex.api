@@ -6,12 +6,16 @@ const apisecret = '<ENTER YOUR API SECERET>';
 bittrex.options({
   apikey,
   apisecret,
-  stream: true,
   verbose: true,
+  websockets: {
+    onConnect() {
+      bittrex.websockets.subscribeOrders((msg) => {
+        console.log(msg);
+      });
+    },
+  },
 });
 
-
-const disconnectedFn = bittrex.websockets.subscribeOrders((order) => {
-  console.log('bittrex order', order);
-  disconnectedFn();
-});
+bittrex.websockets.client(() => {
+  console.log('Starting...');
+}, true);

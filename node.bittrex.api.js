@@ -1,10 +1,11 @@
 const request = require('request');
 const assign = require('object-assign');
-const hmac_sha512 = require('./hmac-sha512.js');
 const jsonic = require('jsonic');
 const signalR = require('signalr-client');
 const cloudscraper = require('cloudscraper');
 const zlib = require('zlib');
+const hmac_sha512 = require('./hmac-sha512.js');
+const uuidv4 = require('./uuidv4');
 
 const NodeBittrexApi = function (givenOptions) {
   let wsclient = null;
@@ -250,8 +251,48 @@ const NodeBittrexApi = function (givenOptions) {
     }
   };
 
-  const handleMessage = function (channel, message) {
-    switch (channel) {
+  let websocketBalanceCallback;
+
+  const handleBalanceMessage = function (message) {
+    if (websocketBalanceCallback) {
+      websocketBalanceCallback(message);
+    }
+  };
+
+  let websocketOrderCallback;
+
+  const handleOrderMessage = function (message) {
+    if (websocketOrderCallback) {
+      websocketOrderCallback(message);
+    }
+  };
+
+  const handleAuthentication = function (callback) {
+    const timestamp = Date.now();
+    const uuid = uuidv4();
+    const signature = hmac_sha512.HmacSHA512(`${timestamp}${uuid}`, opts.apisecret)
+      .toString()
+      .replace('-', '');
+    wsclient
+      .call('c3', 'Authenticate', opts.apikey, timestamp, uuid, signature)
+      .done((err, result) => {
+        if (err) {
+          console.error(err);
+          return;
+        }
+        if (!result.Success) {
+          logger.error(`Authentication failed with error code: ${result.ErrorCode}`);
+          return;
+        }
+        logger.log('Authentication successful');
+        if (callback && typeof callback === 'function') {
+          callback();
+        }
+      });
+  };
+
+  const handleMessage = function (messageType, message) {
+    switch (messageType) {
     case 'tickers':
       handleTickerMessage(message);
       break;
@@ -261,8 +302,17 @@ const NodeBittrexApi = function (givenOptions) {
     case 'trade':
       handleTradeMessage(message);
       break;
+    case 'balance':
+      handleBalanceMessage(message);
+      break;
+    case 'order':
+      handleOrderMessage(message);
+      break;
+    case 'authenticationExpiring':
+      handleAuthentication();
+      break;
     default:
-      console.error('Unrecognized channel');
+      console.error(`Unrecognized message type: ${messageType}`);
     }
   };
 
@@ -270,11 +320,20 @@ const NodeBittrexApi = function (givenOptions) {
     websocketTickersCallbacks = [];
     websocketOrderbookCallbacks = {};
     websocketTradesCallbacks = {};
+    websocketBalanceCallback = undefined;
+    websocketOrderCallback = undefined;
   };
 
-  const connectws = function (callback, force) {
+  const disconnectws = function () {
+    if (wsclient) {
+      wsclient.end();
+    }
+  };
+
+  const connectws = function (callback, authenticate, force) {
     if (wsclient && !force && callback) {
-      return callback(wsclient);
+      callback(wsclient);
+      return disconnectws;
     }
 
     if (force) {
@@ -315,7 +374,11 @@ const NodeBittrexApi = function (givenOptions) {
           logger.log('Websocket bound');
           if (opts.websockets && typeof (opts.websockets.onConnect) === 'function') {
             resetWs();
-            opts.websockets.onConnect();
+            if (authenticate) {
+              handleAuthentication(opts.websockets.onConnect);
+            } else {
+              opts.websockets.onConnect();
+            }
           }
         },
         connectFailed(error) {
@@ -359,9 +422,13 @@ const NodeBittrexApi = function (givenOptions) {
             const data = jsonic(message.utf8Data);
             if (data && data.M) {
               data.M.forEach((obj) => {
-                decodeMessage(obj.A[0], (decoded) => {
-                  handleMessage(obj.M, decoded);
-                });
+                if (obj.A.length) {
+                  decodeMessage(obj.A[0], (decoded) => {
+                    handleMessage(obj.M, decoded);
+                  });
+                  return;
+                }
+                handleMessage(obj.M);
               });
             }
           } catch (e) {
@@ -375,7 +442,7 @@ const NodeBittrexApi = function (givenOptions) {
       }
     }, opts.cloudscraper_headers || {});
 
-    return wsclient;
+    return disconnectws;
   };
 
   const subscribe = function (channels, callback) {
@@ -426,59 +493,13 @@ const NodeBittrexApi = function (givenOptions) {
       });
   };
 
-  // All authenticated ws will be open as separate connections (cause thats our use case)
-  const connectAuthenticateWs = function (subscriptionKey, messageCallback) {
-    const HUB = 'c2';
-    const authenticatedClient = new signalR.client(
-      opts.websockets_baseurl,
-      [HUB],
-      undefined,
-      true,
-    );
-
-    authenticatedClient.start();
-    authenticatedClient.serviceHandlers.connected = function () {
-      console.log('Client connected...Now authenticating');
-      authenticatedClient.call(HUB, 'GetAuthContext', opts.apikey).done((err, challenge) => {
-        const hmacSha512 = hmac_sha512.HmacSHA512(challenge, opts.apisecret);
-        const signedChallenge = hmacSha512.toString().toUpperCase().replace('-', '');
-
-        authenticatedClient.call(HUB, 'Authenticate', opts.apikey, signedChallenge).done((authenticateError) => {
-          if (authenticateError) {
-            console.log('Error authenticating client because:', authenticateError);
-            return;
-          }
-          console.log('Client successfully connected');
-
-          authenticatedClient.on('c2', 'uB', (rawBalance) => {
-            decodeMessage(rawBalance, (balance) => {
-              if (subscriptionKey === 'uB') {
-                messageCallback(balance);
-              }
-            });
-          });
-
-          authenticatedClient.on('c2', 'uO', (rawOrder) => {
-            decodeMessage(rawOrder, (order) => {
-              if (subscriptionKey === 'uO') {
-                messageCallback(order);
-              }
-            });
-          });
-        });
-      });
-    };
-
-    return authenticatedClient.end;
-  };
-
   return {
     options(options) {
       extractOptions(options);
     },
     websockets: {
-      client(callback, force) {
-        return connectws(callback, force);
+      client(callback, authenticate, force) {
+        return connectws(callback, authenticate, force);
       },
       subscribeTickers(callback) {
         connectws(() => {
@@ -530,12 +551,36 @@ const NodeBittrexApi = function (givenOptions) {
         });
       },
       subscribeBalance(callback) {
-        const balanceKey = 'uB';
-        return connectAuthenticateWs(balanceKey, callback);
+        connectws(() => {
+          subscribe('balance', () => {
+            if (!websocketBalanceCallback) {
+              websocketBalanceCallback = callback;
+            }
+          });
+        });
+      },
+      unsubscribeBalance() {
+        unsubscribe('balance', () => {
+          if (websocketBalanceCallback) {
+            websocketBalanceCallback = undefined;
+          }
+        });
       },
       subscribeOrders(callback) {
-        const ordersKey = 'uO';
-        return connectAuthenticateWs(ordersKey, callback);
+        connectws(() => {
+          subscribe('order', () => {
+            if (!websocketOrderCallback) {
+              websocketOrderCallback = callback;
+            }
+          });
+        });
+      },
+      unsubscribeOrders() {
+        unsubscribe('order', () => {
+          if (websocketOrderCallback) {
+            websocketOrderCallback = undefined;
+          }
+        });
       },
     },
     sendCustomRequest(request_string, callback, credentials) {
