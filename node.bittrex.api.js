@@ -206,6 +206,14 @@ const NodeBittrexApi = function (givenOptions) {
     });
   };
 
+  let websocketMarketsCallbacks = [];
+
+  const handleMarketMessage = function (message) {
+    websocketMarketsCallbacks.forEach((callback) => {
+      callback(message);
+    });
+  };
+
   /*
    * websocketOrderbookCallbacks = {
    *    // markets
@@ -294,6 +302,9 @@ const NodeBittrexApi = function (givenOptions) {
     case 'tickers':
       handleTickerMessage(message);
       break;
+    case 'marketSummaries':
+      handleMarketMessage(message);
+      break;
     case 'orderBook':
       handleOrderbookMessage(message);
       break;
@@ -316,6 +327,7 @@ const NodeBittrexApi = function (givenOptions) {
 
   const resetWs = function () {
     websocketTickersCallbacks = [];
+    websocketMarketsCallbacks = [];
     websocketOrderbookCallbacks = {};
     websocketTradesCallbacks = {};
     websocketBalanceCallback = undefined;
@@ -509,6 +521,18 @@ const NodeBittrexApi = function (givenOptions) {
       unsubscribeTickers() {
         unsubscribe('tickers', () => {
           websocketTickersCallbacks = [];
+        });
+      },
+      subscribeMarkets(callback) {
+        connectws(() => {
+          subscribe('market_summaries', () => {
+            websocketMarketsCallbacks.push(callback);
+          });
+        });
+      },
+      unsubscribeMarkets() {
+        unsubscribe('market_summaries', () => {
+          websocketMarketsCallbacks = [];
         });
       },
       subscribeOrderBook(market, depth, callback) {
