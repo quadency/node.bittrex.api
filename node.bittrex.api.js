@@ -336,6 +336,7 @@ const NodeBittrexApi = function (givenOptions) {
 
   const disconnectws = function () {
     if (wsclient) {
+      opts.websockets.autoReconnect = false;
       wsclient.end();
     }
   };
