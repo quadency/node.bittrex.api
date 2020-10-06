@@ -1,17 +1,21 @@
 const bittrex = require('../node.bittrex.api');
 
 const apikey = '<ENTER YOUR API KEY>';
-const apisecret = '<ENTER YOUR API SECERET>';
+const apisecret = '<ENTER YOUR API SECRET>';
 
 bittrex.options({
   apikey,
   apisecret,
-  stream: true,
   verbose: true,
+  websockets: {
+    onConnect() {
+      bittrex.websockets.subscribeBalance((msg) => {
+        console.log(msg);
+      });
+    },
+  },
 });
 
-
-const disconnectedFn = bittrex.websockets.subscribeBalance((balance) => {
-  console.log('bittrex balance', balance);
-  disconnectedFn();
-});
+bittrex.websockets.client(() => {
+  console.log('Starting...');
+}, true);

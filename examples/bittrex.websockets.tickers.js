@@ -4,7 +4,7 @@ bittrex.options({
   verbose: true,
   websockets: {
     onConnect() {
-      bittrex.websockets.subscribeOrderBook('BTC-USDT', 500, (msg) => {
+      bittrex.websockets.subscribeTickers((msg) => {
         console.log(msg);
       });
     },
@@ -12,8 +12,8 @@ bittrex.options({
 });
 
 bittrex.websockets.client(() => {
-  console.log('Starting...');
+  console.log('starting...');
   setTimeout(() => {
-    bittrex.websockets.unsubscribeOrderbook('BTC-USDT', 500);
+    bittrex.websockets.unsubscribeTickers();
   }, 30000);
 });

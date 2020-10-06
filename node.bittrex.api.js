@@ -1,10 +1,11 @@
 const request = require('request');
 const assign = require('object-assign');
-const hmac_sha512 = require('./hmac-sha512.js');
 const jsonic = require('jsonic');
 const signalR = require('signalr-client');
 const cloudscraper = require('cloudscraper');
 const zlib = require('zlib');
+const hmac_sha512 = require('./hmac-sha512.js');
+const uuidv4 = require('./uuidv4');
 
 const NodeBittrexApi = function (givenOptions) {
   let wsclient = null;
@@ -22,8 +23,8 @@ const NodeBittrexApi = function (givenOptions) {
     hostname: 'https://bittrex.com/',
     baseUrl: 'https://bittrex.com/api/v1.1',
     baseUrlv2: 'https://bittrex.com/Api/v2.0',
-    websockets_baseurl: 'wss://socket.bittrex.com/signalr',
-    websockets_hubs: ['CoreHub'],
+    websockets_baseurl: 'wss://socket-v3.bittrex.com/signalr',
+    websockets_hubs: ['c3'],
     apikey: 'APIKEY',
     apisecret: 'APISECRET',
     verbose: false,
@@ -33,6 +34,20 @@ const NodeBittrexApi = function (givenOptions) {
       autoReconnect: true,
     },
     requestTimeoutInSeconds: 15,
+  };
+
+  // active only if opts.verbose is true
+  const logger = {
+    log(msg) {
+      if (opts.verbose) {
+        console.log(msg);
+      }
+    },
+    error(msg) {
+      if (opts.verbose) {
+        console.error(msg);
+      }
+    },
   };
 
   let lastNonces = [];
@@ -131,6 +146,15 @@ const NodeBittrexApi = function (givenOptions) {
           callback(((opts.cleartext) ? body : resultJson), null));
       } catch (err) {
         console.error('error parsing body', err);
+        const errorObj = {
+          success: false,
+          message: 'Body parse error',
+          error,
+          result,
+        };
+        return ((opts.inverse_callback_arguments) ?
+          callback(errorObj, null) :
+          callback(null, errorObj));
       }
       if (!result || !result.success) {
         // error returned by bittrex API - forward the result as an error
@@ -161,21 +185,166 @@ const NodeBittrexApi = function (givenOptions) {
     sendRequestCallback(callback, options);
   };
 
-  let websocketGlobalTickers = false;
-  let websocketGlobalTickerCallback;
-  let websocketMarkets = [];
-  let websocketMarketsCallbacks = [];
+  const decodeMessage = function (encodedMessage, callback) {
+    const raw = Buffer.from(encodedMessage, 'base64');
 
-  const resetWs = function () {
-    websocketGlobalTickers = false;
-    websocketGlobalTickerCallback = undefined;
-    websocketMarkets = [];
-    websocketMarketsCallbacks = [];
+    zlib.inflateRaw(raw, (err, inflated) => {
+      if (err) {
+        console.log('Error uncompressing message', err);
+        callback(null);
+        return;
+      }
+      callback(JSON.parse(inflated.toString('utf8')));
+    });
   };
 
-  const connectws = function (callback, force) {
+  let websocketTickersCallbacks = [];
+
+  const handleTickerMessage = function (message) {
+    websocketTickersCallbacks.forEach((callback) => {
+      callback(message);
+    });
+  };
+
+  let websocketMarketsCallbacks = [];
+
+  const handleMarketMessage = function (message) {
+    websocketMarketsCallbacks.forEach((callback) => {
+      callback(message);
+    });
+  };
+
+  /*
+   * websocketOrderbookCallbacks = {
+   *    // markets
+   *    BTC-USDT: {
+   *      // depths
+   *      1: [],
+   *      25: [],
+   *      500: [],
+   *    },
+   *  };
+   */
+  let websocketOrderbookCallbacks = {};
+
+  const handleOrderbookMessage = function (message) {
+    const { marketSymbol: market, depth } = message;
+    const callbacks = (websocketOrderbookCallbacks[market] && websocketOrderbookCallbacks[market][depth])
+      ? websocketOrderbookCallbacks[market][depth]
+      : [];
+    if (callbacks.length) {
+      callbacks.forEach((callback) => {
+        callback(message);
+      });
+    }
+  };
+
+  /*
+   * websocketTradesCallbacks = {
+   *    // markets
+   *    BTC-USDT: [],
+   * };
+   */
+  let websocketTradesCallbacks = {};
+
+  const handleTradeMessage = function (message) {
+    const { marketSymbol: market } = message;
+    const callbacks = websocketTradesCallbacks[market] || [];
+    if (callbacks.length) {
+      callbacks.forEach((callback) => {
+        callback(message);
+      });
+    }
+  };
+
+  let websocketBalanceCallback;
+
+  const handleBalanceMessage = function (message) {
+    if (websocketBalanceCallback) {
+      websocketBalanceCallback(message);
+    }
+  };
+
+  let websocketOrderCallback;
+
+  const handleOrderMessage = function (message) {
+    if (websocketOrderCallback) {
+      websocketOrderCallback(message);
+    }
+  };
+
+  const handleAuthentication = function (callback) {
+    const timestamp = Date.now();
+    const uuid = uuidv4();
+    const signature = hmac_sha512.HmacSHA512(`${timestamp}${uuid}`, opts.apisecret)
+      .toString()
+      .replace('-', '');
+    wsclient
+      .call('c3', 'Authenticate', opts.apikey, timestamp, uuid, signature)
+      .done((err, result) => {
+        if (err) {
+          console.error(err);
+          return;
+        }
+        if (!result.Success) {
+          logger.error(`Authentication failed with error code: ${result.ErrorCode}`);
+          return;
+        }
+        logger.log('Authentication successful');
+        if (callback && typeof callback === 'function') {
+          callback();
+        }
+      });
+  };
+
+  const handleMessage = function (messageType, message) {
+    switch (messageType) {
+    case 'tickers':
+      handleTickerMessage(message);
+      break;
+    case 'marketSummaries':
+      handleMarketMessage(message);
+      break;
+    case 'orderBook':
+      handleOrderbookMessage(message);
+      break;
+    case 'trade':
+      handleTradeMessage(message);
+      break;
+    case 'balance':
+      handleBalanceMessage(message);
+      break;
+    case 'order':
+      handleOrderMessage(message);
+      break;
+    case 'authenticationExpiring':
+      handleAuthentication();
+      break;
+    default:
+      console.error(`Unrecognized message type: ${messageType}`);
+    }
+  };
+
+  const resetWs = function () {
+    websocketTickersCallbacks = [];
+    websocketMarketsCallbacks = [];
+    websocketOrderbookCallbacks = {};
+    websocketTradesCallbacks = {};
+    websocketBalanceCallback = undefined;
+    websocketOrderCallback = undefined;
+  };
+
+  const disconnectws = function () {
+    if (wsclient) {
+      opts.websockets.autoReconnect = false;
+      wsclient.end();
+    }
+  };
+
+  const connectws = function (callback, authenticate, force) {
     if (wsclient && !force && callback) {
-      return callback(wsclient);
+      callback(wsclient);
+      return disconnectws;
     }
 
     if (force) {
@@ -213,18 +382,22 @@ const NodeBittrexApi = function (givenOptions) {
       wsclient.start();
       wsclient.serviceHandlers = {
         bound() {
-          ((opts.verbose) ? console.log('Websocket bound') : '');
+          logger.log('Websocket bound');
           if (opts.websockets && typeof (opts.websockets.onConnect) === 'function') {
             resetWs();
-            opts.websockets.onConnect();
+            if (authenticate) {
+              handleAuthentication(opts.websockets.onConnect);
+            } else {
+              opts.websockets.onConnect();
+            }
           }
         },
         connectFailed(error) {
-          ((opts.verbose) ? console.log('Websocket connectFailed: ', error) : '');
+          logger.error(`Websocket connectFailed: ${error}`);
         },
         disconnected() {
           console.log('bittrex disconnected basic websocket');
-          ((opts.verbose) ? console.log('Websocket disconnected') : '');
+          logger.log('Websocket disconnected');
           if (opts.websockets && typeof (opts.websockets.onDisconnect) === 'function') {
             opts.websockets.onDisconnect();
           }
@@ -232,55 +405,46 @@ const NodeBittrexApi = function (givenOptions) {
           if (
             opts.websockets &&
             (
-              opts.websockets.autoReconnect === true ||
+              opts.websockets.autoReconnect ||
               typeof (opts.websockets.autoReconnect) === 'undefined'
             )
           ) {
-            ((opts.verbose) ? console.log('Websocket auto reconnecting.') : '');
+            logger.log('Websocket auto reconnecting.');
             wsclient.start(); // ensure we try reconnect
           }
         },
         onerror(error) {
-          ((opts.verbose) ? console.log('Websocket onerror: ', error) : '');
+          logger.error(`Websocket onerror: ${error}`);
         },
         bindingError(error) {
-          ((opts.verbose) ? console.log('Websocket bindingError: ', error) : '');
+          logger.error(`Websocket bindingError: ${error}`);
         },
         connectionLost(error) {
-          ((opts.verbose) ? console.log('Connection Lost: ', error) : '');
+          logger.error(`Connection Lost: ${error}`);
         },
         reconnecting() {
           return true;
         },
         connected() {
-          if (websocketGlobalTickers) {
-            wsclient.call('CoreHub', 'SubscribeToSummaryDeltas').done((err, result) => {
-              if (err) {
-                console.error(err);
-                return;
-              }
-
-              if (result === true) {
-                ((opts.verbose) ? console.log('Subscribed to global tickers') : '');
-              }
-            });
-          }
-
-          if (websocketMarkets.length > 0) {
-            websocketMarkets.forEach((market) => {
-              wsclient.call('CoreHub', 'SubscribeToExchangeDeltas', market).done((err, result) => {
-                if (err) {
-                  console.error(err);
+          logger.log('Websocket connected');
+        },
+        messageReceived(message) {
+          try {
+            const data = jsonic(message.utf8Data);
+            if (data && data.M) {
+              data.M.forEach((obj) => {
+                if (obj.A.length) {
+                  decodeMessage(obj.A[0], (decoded) => {
+                    handleMessage(obj.M, decoded);
+                  });
                   return;
                 }
-
-                if (result === true) {
-                  ((opts.verbose) ? console.log(`Subscribed to ${market}`) : '');
-                }
+                handleMessage(obj.M);
               });
-            });
+            }
+          } catch (e) {
+            logger.error(e);
           }
-          ((opts.verbose) ? console.log('Websocket connected') : '');
         },
       };
 
@@ -289,229 +453,157 @@ const NodeBittrexApi = function (givenOptions) {
       }
     }, opts.cloudscraper_headers || {});
 
-    return wsclient;
+    return disconnectws;
   };
 
+  const subscribe = function (channels, callback) {
+    const subscribeChannels = Array.isArray(channels) ? channels : [channels];
 
-  const setMessageReceivedWs = function () {
-    wsclient.serviceHandlers.messageReceived = function (message) {
-      try {
-        const data = jsonic(message.utf8Data);
-        if (data && data.M) {
-          data.M.forEach((M) => {
-            if (websocketGlobalTickerCallback) {
-              websocketGlobalTickerCallback(M, wsclient);
-            }
-            if (websocketMarketsCallbacks.length > 0) {
-              websocketMarketsCallbacks.forEach((callback) => {
-                callback(M, wsclient);
-              });
-            }
-          });
-        } else {
-          if (websocketGlobalTickerCallback) {
-            websocketGlobalTickerCallback({ unhandled_data: data }, wsclient);
-          }
-          if (websocketMarketsCallbacks.length > 0) {
-            websocketMarketsCallbacks.forEach((callback) => {
-              callback({ unhandled_data: data }, wsclient);
-            });
-          }
+    wsclient
+      .call('c3', 'subscribe', subscribeChannels)
+      .done((err, results) => {
+        if (err) {
+          console.error(err);
+          return;
         }
-      } catch (e) {
-        ((opts.verbose) ? console.error(e) : '');
-      }
-      return false;
-    };
-  };
 
-  const decodeMessage = function (encodedMessage, callback) {
-    const raw = Buffer.from(encodedMessage, 'base64');
-
-    zlib.inflateRaw(raw, (err, inflated) => {
-      if (err) {
-        console.log('Error uncompressing message', err);
-        callback(null);
-        return;
-      }
-      callback(JSON.parse(inflated.toString('utf8')));
-    });
-  };
-
-  // All authenticated ws will be open as separate connections (cause thats our use case)
-  const connectAuthenticateWs = function (subscriptionKey, messageCallback) {
-    const HUB = 'c2';
-    const authenticatedClient = new signalR.client(
-      opts.websockets_baseurl,
-      [HUB],
-      undefined,
-      true,
-    );
-
-    authenticatedClient.start();
-    authenticatedClient.serviceHandlers.connected = function () {
-      console.log('Client connected...Now authenticating');
-      authenticatedClient.call(HUB, 'GetAuthContext', opts.apikey).done((err, challenge) => {
-        const hmacSha512 = hmac_sha512.HmacSHA512(challenge, opts.apisecret);
-        const signedChallenge = hmacSha512.toString().toUpperCase().replace('-', '');
-
-        authenticatedClient.call(HUB, 'Authenticate', opts.apikey, signedChallenge).done((authenticateError) => {
-          if (authenticateError) {
-            console.log('Error authenticating client because:', authenticateError);
-            return;
-          }
-          console.log('Client successfully connected');
-
-          authenticatedClient.on('c2', 'uB', (rawBalance) => {
-            decodeMessage(rawBalance, (balance) => {
-              if (subscriptionKey === 'uB') {
-                messageCallback(balance);
-              }
-            });
-          });
-
-          authenticatedClient.on('c2', 'uO', (rawOrder) => {
-            decodeMessage(rawOrder, (order) => {
-              if (subscriptionKey === 'uO') {
-                messageCallback(order);
-              }
-            });
-          });
-        });
-      });
-    };
-
-    return authenticatedClient.end;
-  };
-
-
-  const orderBookCache = {};
-  let lastOrderBookDeltaTime = Date.now();
-
-  const sideReducer = (acc, curr) => {
-    acc[curr.R] = curr.Q;
-    return acc;
-  };
-
-  const initializeOrderBookFor = function (pair, book) {
-    if (book) {
-      const buys = (book.Z).reduce(sideReducer, {});
-      const sells = (book.S).reduce(sideReducer, {});
-      orderBookCache[pair] = {
-        buys,
-        sells,
-      };
-    } else {
-      orderBookCache[pair] = {
-        buys: {},
-        sells: {},
-      };
-    }
-  };
-
-  const updateSide = function (pair, side, sideDeltas) {
-    sideDeltas.forEach((delta) => {
-      if (!orderBookCache[pair]) {
-        initializeOrderBookFor(pair, null);
-        return;
-      }
-      if (delta.TY === 1) {
-        delete orderBookCache[pair][side][delta.R];
-        return;
-      }
-      orderBookCache[pair][side][delta.R] = delta.Q;
-    });
-  };
-  const updateOrderBookCacheWith = function (deltas) {
-    const { M: pair, Z: buys, S: sells } = deltas;
-
-    updateSide(pair, 'buys', buys);
-    updateSide(pair, 'sells', sells);
-  };
-
-  const connectOrderbook = function (markets, callback) {
-    const HUB = 'c2';
-    const orderBookClient = new signalR.client(
-      opts.websockets_baseurl,
-      [HUB],
-      undefined,
-      true,
-    );
-
-    orderBookClient.start();
-    orderBookClient.serviceHandlers.connected = function () {
-      console.log('Client connected...Fetching order book snapshots');
-      markets.forEach((market) => {
-        orderBookClient.call(HUB, 'QueryExchangeState', market).done((err, response) => {
-          if (err) {
-            console.error(err);
-            return;
-          }
-
-          decodeMessage(response, (decodedOrderbook) => {
-            initializeOrderBookFor(market, decodedOrderbook);
-          });
-
-          orderBookClient.call(HUB, 'SubscribeToExchangeDeltas', market).done((deleteError, isSubscribed) => {
-            if (deleteError) {
-              console.error(deleteError);
-              return;
+        if (results) {
+          results.forEach((result) => {
+            if (!result.Success) {
+              logger.error(`Subscribe failed with error code: ${result.ErrorCode}`);
             }
-            console.log(`${market} is subscribed: ${isSubscribed}`);
           });
-        });
+        }
+        if (callback && typeof callback === 'function') {
+          callback();
+        }
       });
-
-      orderBookClient.on(HUB, 'uE', (rawDelta) => {
-        lastOrderBookDeltaTime = Date.now();
-        decodeMessage(rawDelta, (delta) => {
-          updateOrderBookCacheWith(delta);
-          callback(orderBookCache, delta);
-        });
-      });
-    };
-    orderBookClient.serviceHandlers.disconnected = () => {
-      console.log('bittrex order book disconnected');
-      orderBookClient.start();
-    };
-
-
-    return orderBookClient.end;
   };
 
+  const unsubscribe = function (channels, callback) {
+    const unsubscribeChannels = Array.isArray(channels) ? channels : [channels];
+
+    wsclient
+      .call('c3', 'unsubscribe', unsubscribeChannels)
+      .done((err, results) => {
+        if (err) {
+          console.error(err);
+          return;
+        }
+
+        if (results) {
+          results.forEach((result) => {
+            if (!result.Success) {
+              logger.error(`Subscribe failed with error code: ${result.ErrorCode}`);
+            }
+          });
+        }
+        if (callback && typeof callback === 'function') {
+          callback();
+        }
+      });
+  };
 
   return {
     options(options) {
       extractOptions(options);
     },
     websockets: {
-      client(callback, force) {
-        return connectws(callback, force);
+      client(callback, authenticate, force) {
+        return connectws(callback, authenticate, force);
       },
-      listen(callback, force) {
+      subscribeTickers(callback) {
         connectws(() => {
-          websocketGlobalTickers = true;
-          websocketGlobalTickerCallback = callback;
-          setMessageReceivedWs();
-        }, force);
+          subscribe('tickers', () => {
+            websocketTickersCallbacks.push(callback);
+          });
+        });
       },
-      subscribe(markets, callback, force) {
+      unsubscribeTickers() {
+        unsubscribe('tickers', () => {
+          websocketTickersCallbacks = [];
+        });
+      },
+      subscribeMarkets(callback) {
         connectws(() => {
-          websocketMarkets = websocketMarkets.concat(markets);
-          websocketMarketsCallbacks.push(callback);
-          setMessageReceivedWs();
-        }, force);
+          subscribe('market_summaries', () => {
+            websocketMarketsCallbacks.push(callback);
+          });
+        });
+      },
+      unsubscribeMarkets() {
+        unsubscribe('market_summaries', () => {
+          websocketMarketsCallbacks = [];
+        });
+      },
+      subscribeOrderBook(market, depth, callback) {
+        connectws(() => {
+          subscribe(`orderbook_${market}_${depth}`, () => {
+            if (!websocketOrderbookCallbacks[market]) {
+              websocketOrderbookCallbacks[market] = {};
+            }
+            if (!websocketOrderbookCallbacks[market][depth]) {
+              websocketOrderbookCallbacks[market][depth] = [];
+            }
+            websocketOrderbookCallbacks[market][depth].push(callback);
+          });
+        });
+      },
+      unsubscribeOrderbook(market, depth) {
+        unsubscribe(`orderbook_${market}_${depth}`, () => {
+          if (websocketOrderbookCallbacks[market] && websocketOrderbookCallbacks[market][depth]) {
+            delete websocketOrderbookCallbacks[market][depth];
+          }
+        });
+      },
+      subscribeTrades(market, callback) {
+        connectws(() => {
+          subscribe(`trade_${market}`, () => {
+            if (!websocketTradesCallbacks[market]) {
+              websocketTradesCallbacks[market] = [];
+            }
+            websocketTradesCallbacks[market].push(callback);
+          });
+        });
+      },
+      unsubscribeTrades(market) {
+        unsubscribe(`trade_${market}`, () => {
+          if (websocketTradesCallbacks[market]) {
+            delete websocketTradesCallbacks[market];
+          }
+        });
       },
       subscribeBalance(callback) {
-        const balanceKey = 'uB';
-        return connectAuthenticateWs(balanceKey, callback);
+        connectws(() => {
+          subscribe('balance', () => {
+            if (!websocketBalanceCallback) {
+              websocketBalanceCallback = callback;
+            }
+          });
+        });
+      },
+      unsubscribeBalance() {
+        unsubscribe('balance', () => {
+          if (websocketBalanceCallback) {
+            websocketBalanceCallback = undefined;
+          }
+        });
       },
       subscribeOrders(callback) {
-        const ordersKey = 'uO';
-        return connectAuthenticateWs(ordersKey, callback);
+        connectws(() => {
+          subscribe('order', () => {
+            if (!websocketOrderCallback) {
+              websocketOrderCallback = callback;
+            }
+          });
+        });
       },
-      subscribeOrderBook(markets, callback) {
-        return connectOrderbook(markets, callback);
+      unsubscribeOrders() {
+        unsubscribe('order', () => {
+          if (websocketOrderCallback) {
+            websocketOrderCallback = undefined;
+          }
+        });
       },
     },
     sendCustomRequest(request_string, callback, credentials) {

@@ -34,7 +34,7 @@
   },
   "homepage": "https://github.com/dparlevliet/node.bittrex.api",
   "scripts": {
-    "test": "mocha"
+    "test": "mocha ./tests/*.spec.js"
   },
   "devDependencies": {
     "eslint": "^4.19.1",
