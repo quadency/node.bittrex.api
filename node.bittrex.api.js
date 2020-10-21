@@ -351,7 +351,7 @@ const NodeBittrexApi = function (givenOptions) {
       try {
         wsclient.end();
       } catch (e) {
-        console.err('Error ending ws client', e);
+        console.error('Error ending ws client', e);
       }
     }
 
